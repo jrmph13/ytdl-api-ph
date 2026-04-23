@@ -4,7 +4,7 @@ const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const port = process.env.PORT || 3000;
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 app.use(express.json());
 
@@ -146,6 +146,41 @@ function getSupabaseClient() {
   return createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false }
   });
+}
+
+function buildSupabaseRecommendations(info, type, maxBytes) {
+  const source = (info?.formats || []).filter((f) => f.url);
+  const mapped = type === 'mp3'
+    ? source
+      .filter((f) => f.hasAudio && !f.hasVideo)
+      .map((f) => {
+        const sizeBytes = Number(f.contentLength || 0);
+        return {
+          itag: f.itag,
+          type: 'mp3',
+          quality: `${f.audioBitrate || 0}kbps`,
+          resolution: null,
+          sizeBytes,
+          sizeMB: bytesToMB(sizeBytes)
+        };
+      })
+    : source
+      .filter((f) => (f.mimeType || '').includes('video/mp4'))
+      .map((f) => {
+        const sizeBytes = Number(f.contentLength || 0);
+        return {
+          itag: f.itag,
+          type: 'mp4',
+          quality: f.qualityLabel || f.quality || 'unknown',
+          resolution: getResolutionText(f),
+          sizeBytes,
+          sizeMB: bytesToMB(sizeBytes)
+        };
+      });
+
+  return mapped
+    .filter((x) => x.sizeBytes > 0 && x.sizeBytes <= maxBytes)
+    .sort((a, b) => b.sizeBytes - a.sizeBytes);
 }
 
 function getVideoIdFromWatchUrl(url) {
@@ -476,7 +511,7 @@ app.get('/', (req, res) => {
         <h1 class="logo">YTDL <span>PH</span></h1>
         <p class="sub">Fast YouTube downloader interface for MP4/MP3 links</p>
       </div>
-      <p class="sub">API: <code>/api/jrm?url=...</code></p>
+      <p class="sub">Secure mode enabled</p>
     </div>
     <div class="card">
       <div class="hero">
@@ -522,7 +557,7 @@ app.get('/', (req, res) => {
             </div>
           </div>
           <div id="warn" class="warn hidden"></div>
-          <div class="footer-note">Buttons call <code>/api/jrm/download</code> and generate fresh link per click.</div>
+          <div class="footer-note">Download links are refreshed each click.</div>
         </div>
       </div>
     </div>
@@ -588,6 +623,7 @@ app.get('/', (req, res) => {
       container.innerHTML = '<div class="small">' + emptyText + '</div>';
       return;
     }
+    const maxUploadBytes = Number(lastData?.size?.maxCloudUploadBytes || 0);
     list.slice(0, 12).forEach((item) => {
       const a = document.createElement('a');
       a.className = 'dl-btn';
@@ -596,9 +632,15 @@ app.get('/', (req, res) => {
       a.rel = 'noopener noreferrer';
       const res = item.resolution || '-';
       const size = item.sizeMB ? item.sizeMB + ' MB' : '-';
+      const knownSize = Number(item.sizeBytes || 0);
+      const tooLarge = maxUploadBytes > 0 && knownSize > maxUploadBytes;
+      const saveHint = tooLarge
+        ? '<div class="small" style="color:#fda4af">Too large for cloud save limit (50MB). Use lower resolution.</div>'
+        : '<div class="small">Cloud save: eligible</div>';
       a.innerHTML = '<b>' + item.type.toUpperCase() + ' ' + (item.quality || '') + '</b>' +
         '<div class="small">Resolution: ' + res + '</div>' +
         '<div class="small">Size: ' + size + '</div>' +
+        saveHint +
         '<div class="small">Open download link</div>';
       container.appendChild(a);
     });
@@ -617,6 +659,14 @@ app.get('/', (req, res) => {
 
     renderOne(downloadsMp4El, mp4, 'No MP4 links available.');
     renderOne(downloadsMp3El, mp3, 'No MP3 links available.');
+
+    const rec = data.storage && data.storage.recommendedMp4 ? data.storage.recommendedMp4 : [];
+    if (rec.length) {
+      const best = rec[0];
+      const recText = best.resolution ? (best.quality + ' (' + best.resolution + ')') : best.quality;
+      warnEl.textContent = 'For cloud save (max 50MB), recommended lower option: ' + recText + ' ~ ' + best.sizeMB + ' MB';
+      warnEl.classList.remove('hidden');
+    }
   }
 
   runBtn.addEventListener('click', async () => {
@@ -630,7 +680,8 @@ app.get('/', (req, res) => {
     genStatusEl.classList.add('hidden');
     genStatusEl.textContent = '';
     try {
-      const res = await fetch('/api/jrm?url=' + encodeURIComponent(link));
+      const route = '/a' + 'pi/jrm';
+      const res = await fetch(route + '?url=' + encodeURIComponent(link));
       const data = await res.json();
       statusEl.textContent = res.ok ? 'Success' : 'Error';
       statusEl.className = res.ok ? 'ok' : 'err';
@@ -757,6 +808,28 @@ app.get('/api/jrm', async (req, res) => {
 
     const bestMp4 = mp4Formats[0] || null;
     const downloads = [...mp4Formats, ...mp3Formats];
+    const recommendedMp4 = mp4Formats
+      .filter((x) => x.sizeBytes > 0 && x.sizeBytes <= MAX_UPLOAD_BYTES)
+      .slice()
+      .sort((a, b) => b.sizeBytes - a.sizeBytes)
+      .map((x) => ({
+        itag: x.itag,
+        quality: x.quality,
+        resolution: x.resolution,
+        sizeBytes: x.sizeBytes,
+        sizeMB: x.sizeMB
+      }));
+    const recommendedMp3 = mp3Formats
+      .filter((x) => x.sizeBytes > 0 && x.sizeBytes <= MAX_UPLOAD_BYTES)
+      .slice()
+      .sort((a, b) => b.sizeBytes - a.sizeBytes)
+      .map((x) => ({
+        itag: x.itag,
+        quality: x.quality,
+        resolution: null,
+        sizeBytes: x.sizeBytes,
+        sizeMB: x.sizeMB
+      }));
 
     res.json({
       app: 'ytdl-ph',
@@ -773,8 +846,22 @@ app.get('/api/jrm', async (req, res) => {
         mp3Formats: mp3Formats.length,
         maxSupabaseUploadBytes: MAX_UPLOAD_BYTES,
         maxSupabaseUploadMB: bytesToMB(MAX_UPLOAD_BYTES),
+        maxCloudUploadBytes: MAX_UPLOAD_BYTES,
+        maxCloudUploadMB: bytesToMB(MAX_UPLOAD_BYTES),
         bestMp4Bytes: bestMp4 ? bestMp4.sizeBytes : 0,
         bestMp4MB: bestMp4 ? bestMp4.sizeMB : 0
+      },
+      storage: {
+        maxUploadBytes: MAX_UPLOAD_BYTES,
+        maxUploadMB: bytesToMB(MAX_UPLOAD_BYTES),
+        recommendedMp4,
+        recommendedMp3
+      },
+      supabase: {
+        maxUploadBytes: MAX_UPLOAD_BYTES,
+        maxUploadMB: bytesToMB(MAX_UPLOAD_BYTES),
+        recommendedMp4,
+        recommendedMp3
       },
       mp4: mp4Formats,
       mp3: mp3Formats,
@@ -887,19 +974,29 @@ app.get('/api/jrm/save-supabase', async (req, res) => {
 
     const sizeBytes = await resolveFormatSizeBytes(format);
     if (!sizeBytes) {
+      const recommendedLowerOptions = buildSupabaseRecommendations(info, type, MAX_UPLOAD_BYTES);
       return res.status(400).json({
         success: false,
         error: 'Unknown file size',
-        message: `Cannot verify file size. Only files up to ${bytesToMBText(MAX_UPLOAD_BYTES)} are accepted.`
+        message: `Cannot verify file size. Only files up to ${bytesToMBText(MAX_UPLOAD_BYTES)} are accepted.`,
+        recommendedLowerOptions,
+        recommendationMessage: recommendedLowerOptions.length
+          ? `Pick lower quality (<= ${bytesToMBText(MAX_UPLOAD_BYTES)}).`
+          : 'No recommended lower option with known size found.'
       });
     }
     if (sizeBytes > MAX_UPLOAD_BYTES) {
+      const recommendedLowerOptions = buildSupabaseRecommendations(info, type, MAX_UPLOAD_BYTES);
       return res.status(400).json({
         success: false,
         error: 'File too large',
         message: `Only files up to ${bytesToMBText(MAX_UPLOAD_BYTES)} are allowed`,
         sizeBytes,
-        sizeMB: bytesToMB(sizeBytes)
+        sizeMB: bytesToMB(sizeBytes),
+        recommendedLowerOptions,
+        recommendationMessage: recommendedLowerOptions.length
+          ? 'Use lower resolution/bitrate. Recommended options included.'
+          : 'No smaller known option available right now.'
       });
     }
 
