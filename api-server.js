@@ -320,7 +320,7 @@ async function buildFallbackPayload(url, originalError) {
       channelId: '',
       keywords: []
     },
-    warning: 'Limited data only. Video source is currently blocked on this server IP. Try another video or lower quality.',
+    warning: 'Limited data only. Video source is currently blocked on this server IP. Try another video, lower quality, or set YT_COOKIE environment variable with YouTube cookies.',
     originalError
   };
 }
