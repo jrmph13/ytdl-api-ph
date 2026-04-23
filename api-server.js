@@ -84,6 +84,10 @@ function getResolutionText(format) {
   return guessResolutionFromQuality(format?.qualityLabel || format?.quality) || null;
 }
 
+function toDownloadApi(normalizedUrl, itag, type) {
+  return `/api/jrm/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(itag)}&type=${encodeURIComponent(type)}`;
+}
+
 function getVideoIdFromWatchUrl(url) {
   try {
     const parsed = new URL(url);
@@ -226,10 +230,11 @@ app.get('/', (req, res) => {
       --line: #1f2937;
       --text: #e5e7eb;
       --muted: #9ca3af;
-      --accent: #22d3ee;
-      --accent2: #38bdf8;
+      --accent: #06b6d4;
+      --accent2: #0ea5e9;
       --good: #22c55e;
       --bad: #ef4444;
+      --gold: #f59e0b;
     }
     * { box-sizing: border-box; }
     body {
@@ -242,14 +247,23 @@ app.get('/', (req, res) => {
     }
     .wrap { max-width: 920px; margin: 0 auto; }
     .card {
-      background: linear-gradient(180deg, #111827, #0b1220);
+      background: linear-gradient(180deg, #111827 0%, #0b1220 100%);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 20px;
+      border-radius: 18px;
+      padding: 22px;
       box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
-    h1 { margin: 0 0 8px; font-size: 28px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
     p { color: var(--muted); margin-top: 0; }
+    .hero-note {
+      border: 1px dashed #1e3a8a;
+      border-radius: 10px;
+      padding: 10px;
+      margin: 10px 0 16px;
+      color: #bfdbfe;
+      background: rgba(30, 58, 138, .15);
+      font-size: 13px;
+    }
     .row { display: flex; gap: 10px; flex-wrap: wrap; }
     input {
       flex: 1;
@@ -308,9 +322,28 @@ app.get('/', (req, res) => {
       background: #020617;
       color: var(--text);
     }
-    .dl-btn b { display: block; color: #93c5fd; margin-bottom: 3px; }
+    .dl-btn b { display: block; color: #7dd3fc; margin-bottom: 3px; }
     .small { color: var(--muted); font-size: 12px; }
     .hidden { display: none; }
+    .warn {
+      margin-top: 10px;
+      color: #fcd34d;
+      font-size: 12px;
+      border: 1px solid rgba(245, 158, 11, .35);
+      background: rgba(245, 158, 11, .12);
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 10px;
+      border: 1px solid #1f2937;
+      background: #0a1428;
+      color: #93c5fd;
+      font-size: 12px;
+      margin-right: 6px;
+    }
     @media (max-width: 760px) {
       .preview { grid-template-columns: 1fr; }
     }
@@ -323,7 +356,10 @@ app.get('/', (req, res) => {
   <div class="wrap">
     <div class="card">
       <h1>JRM YTDL API</h1>
-      <p>Test endpoint: <code>/api/jrm?url=YOUTUBE_LINK</code> or <code>/api/jrm?=YOUTUBE_LINK</code></p>
+      <p>Paste YouTube URL, then get fresh download buttons.</p>
+      <div class="hero-note">
+        Download buttons now use backend endpoint <code>/api/jrm/download</code> so each click generates a fresh stream link.
+      </div>
       <div class="row">
         <input id="yt" value="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />
         <button id="run">Test API</button>
@@ -338,6 +374,10 @@ app.get('/', (req, res) => {
         <div>
           <h2 id="title" class="title"></h2>
           <p id="desc" class="desc"></p>
+          <div style="margin-top:10px;">
+            <span id="badgeExtractor" class="badge">Extractor: -</span>
+            <span id="badgeMode" class="badge">Mode: -</span>
+          </div>
           <div class="meta">
             <div class="chip"><b>Video ID</b><span id="videoId">-</span></div>
             <div class="chip"><b>Duration</b><span id="duration">-</span></div>
@@ -346,6 +386,7 @@ app.get('/', (req, res) => {
           </div>
           <div class="dl-head">Download Links</div>
           <div id="downloads" class="dl-grid"></div>
+          <div id="warn" class="warn hidden"></div>
         </div>
       </div>
     </div>
@@ -363,6 +404,9 @@ app.get('/', (req, res) => {
   const viewsEl = document.getElementById('views');
   const channelEl = document.getElementById('channel');
   const downloadsEl = document.getElementById('downloads');
+  const warnEl = document.getElementById('warn');
+  const badgeExtractor = document.getElementById('badgeExtractor');
+  const badgeMode = document.getElementById('badgeMode');
 
   function fmtViews(n) {
     const num = Number(n || 0);
@@ -380,7 +424,7 @@ app.get('/', (req, res) => {
     downloads.slice(0, 20).forEach((item) => {
       const a = document.createElement('a');
       a.className = 'dl-btn';
-      a.href = item.url;
+      a.href = item.downloadApi || item.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       const res = item.resolution || '-';
@@ -409,6 +453,8 @@ app.get('/', (req, res) => {
         return;
       }
       const d = data.details || {};
+      warnEl.classList.add('hidden');
+      warnEl.textContent = '';
       thumbEl.src = data.thumbnail || '';
       titleEl.textContent = d.title || 'No title';
       descEl.textContent = d.description || 'No description';
@@ -416,7 +462,13 @@ app.get('/', (req, res) => {
       durationEl.textContent = d.durationText || '0:00';
       viewsEl.textContent = fmtViews(d.views);
       channelEl.textContent = d.channelName || '-';
+      badgeExtractor.textContent = 'Extractor: ' + (data.extractor || '-');
+      badgeMode.textContent = 'Mode: ' + (data.partial ? 'Partial' : 'Full');
       renderDownloads(data.downloads || [], data);
+      if (data.warning) {
+        warnEl.textContent = data.warning;
+        warnEl.classList.remove('hidden');
+      }
       resultEl.classList.remove('hidden');
     } catch (err) {
       statusEl.textContent = 'Network error';
@@ -471,7 +523,8 @@ app.get('/api/jrm', async (req, res) => {
           fps: f.fps || null,
           hasAudio: !!f.hasAudio,
           hasVideo: !!f.hasVideo,
-          url: f.url
+          url: f.url,
+          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp4')
         };
       })
       .sort((a, b) => b.sizeBytes - a.sizeBytes);
@@ -489,7 +542,8 @@ app.get('/api/jrm', async (req, res) => {
           sizeBytes,
           sizeMB: bytesToMB(sizeBytes),
           audioBitrate: f.audioBitrate || 0,
-          url: f.url
+          url: f.url,
+          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp3')
         };
       })
       .sort((a, b) => b.audioBitrate - a.audioBitrate || b.sizeBytes - a.sizeBytes);
@@ -544,6 +598,44 @@ app.get('/api/jrm', async (req, res) => {
       success: false,
       error: message,
       message: 'Failed to fetch video details'
+    });
+  }
+});
+
+app.get('/api/jrm/download', async (req, res) => {
+  try {
+    const rawUrl = req.query.url ? String(req.query.url) : '';
+    const itag = Number(req.query.itag || 0);
+    const normalizedUrl = normalizeYoutubeUrl(rawUrl);
+
+    if (!normalizedUrl || !itag) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing url/itag',
+        message: 'Use /api/jrm/download?url=YOUTUBE_LINK&itag=FORMAT_ITAG&type=mp4|mp3'
+      });
+    }
+
+    const { info } = await getInfoWithRetries(normalizedUrl);
+    const format = (info.formats || []).find((f) => Number(f.itag) === itag && f.url);
+
+    if (!format) {
+      return res.status(404).json({
+        success: false,
+        error: 'Format not found',
+        message: 'Requested itag is unavailable for this video now. Refresh and try again.'
+      });
+    }
+
+    // Redirect to a freshly generated source URL on each click.
+    // This avoids stale links without proxying video bytes through Render.
+    return res.redirect(format.url);
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : 'Download failed';
+    res.status(500).json({
+      success: false,
+      error: message,
+      message: 'Unable to stream download right now. Please retry.'
     });
   }
 });
