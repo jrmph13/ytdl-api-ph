@@ -458,7 +458,7 @@ app.get('/api/jrm', async (req, res) => {
     });
   } catch (error) {
     const message = error && error.message ? String(error.message) : 'Unknown error';
-    const isExtractionBlocked = /not a bot|playable formats|status code:\s*410/i.test(message);
+    const isExtractionBlocked = /not a bot|too many requests|playable formats|status code:\s*(410|429)/i.test(message);
     if (isExtractionBlocked) {
       const raw = getYoutubeUrlFromRequest(req);
       const normalized = normalizeYoutubeUrl(raw) || raw;
