@@ -471,6 +471,33 @@ app.get('/', (req, res) => {
     return num.toLocaleString();
   }
 
+  function dedupeWarningText(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+
+    const lines = raw.split(/\\n+/).map((x) => x.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      const uniq = [];
+      const seen = new Set();
+      lines.forEach((line) => {
+        if (!seen.has(line)) {
+          seen.add(line);
+          uniq.push(line);
+        }
+      });
+      return uniq.join(' ');
+    }
+
+    if (raw.length % 2 === 0) {
+      const half = raw.length / 2;
+      const a = raw.slice(0, half).trim();
+      const b = raw.slice(half).trim();
+      if (a && a === b) return a;
+    }
+
+    return raw;
+  }
+
   function renderOne(container, list, emptyText) {
     container.innerHTML = '';
     if (!list || !list.length) {
@@ -494,8 +521,18 @@ app.get('/', (req, res) => {
   }
 
   function renderDownloads(data) {
-    renderOne(downloadsMp4El, data.mp4 || [], 'No MP4 links available.');
-    renderOne(downloadsMp3El, data.mp3 || [], 'No MP3 links available.');
+    const mp4 = data.mp4 || [];
+    const mp3 = data.mp3 || [];
+    const total = mp4.length + mp3.length;
+
+    if (!total && data.warning) {
+      renderOne(downloadsMp4El, mp4, 'No MP4 links available right now.');
+      renderOne(downloadsMp3El, mp3, 'No MP3 links available right now.');
+      return;
+    }
+
+    renderOne(downloadsMp4El, mp4, 'No MP4 links available.');
+    renderOne(downloadsMp3El, mp3, 'No MP3 links available.');
   }
 
   runBtn.addEventListener('click', async () => {
@@ -527,7 +564,7 @@ app.get('/', (req, res) => {
       badgeMode.textContent = 'Mode: ' + (data.partial ? 'Partial' : 'Full');
       renderDownloads(data);
       if (data.warning) {
-        warnEl.textContent = data.warning;
+        warnEl.textContent = dedupeWarningText(data.warning);
         warnEl.classList.remove('hidden');
       }
       resultEl.classList.remove('hidden');
