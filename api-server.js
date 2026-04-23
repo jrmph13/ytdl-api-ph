@@ -98,6 +98,10 @@ function toSupabaseSaveApi(normalizedUrl, itag, type) {
   return `/api/jrm/save-supabase?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(itag)}&type=${encodeURIComponent(type)}`;
 }
 
+function toCloudDownloadApi(normalizedUrl, itag, type) {
+  return `/api/jrm/cloud-download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(itag)}&type=${encodeURIComponent(type)}`;
+}
+
 function sanitizeFileBaseName(name) {
   return String(name || 'video')
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
@@ -557,7 +561,7 @@ app.get('/', (req, res) => {
             </div>
           </div>
           <div id="warn" class="warn hidden"></div>
-          <div class="footer-note">Download links are refreshed each click.</div>
+          <div class="footer-note">Each option processes on click, then auto-download starts. Uploaded cloud file is auto-deleted after 1 minute.</div>
         </div>
       </div>
     </div>
@@ -627,7 +631,8 @@ app.get('/', (req, res) => {
     list.slice(0, 12).forEach((item) => {
       const a = document.createElement('a');
       a.className = 'dl-btn';
-      a.href = item.downloadApi || item.url;
+      const cloudEligible = !!item.cloudEligible;
+      a.href = cloudEligible ? (item.cloudDownloadApi || item.downloadApi || item.url) : '#';
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       const res = item.resolution || '-';
@@ -636,12 +641,16 @@ app.get('/', (req, res) => {
       const tooLarge = maxUploadBytes > 0 && knownSize > maxUploadBytes;
       const saveHint = tooLarge
         ? '<div class="small" style="color:#fda4af">Too large for cloud save limit (50MB). Use lower resolution.</div>'
-        : '<div class="small">Cloud save: eligible</div>';
+        : '<div class="small">Cloud process: ready</div>';
+      if (!cloudEligible) {
+        a.style.pointerEvents = 'none';
+        a.style.opacity = '0.65';
+      }
       a.innerHTML = '<b>' + item.type.toUpperCase() + ' ' + (item.quality || '') + '</b>' +
         '<div class="small">Resolution: ' + res + '</div>' +
         '<div class="small">Size: ' + size + '</div>' +
         saveHint +
-        '<div class="small">Open download link</div>';
+        '<div class="small">' + (cloudEligible ? 'Process and download' : 'Pick lower resolution') + '</div>';
       container.appendChild(a);
     });
   }
@@ -778,9 +787,11 @@ app.get('/api/jrm', async (req, res) => {
           hasAudio: !!f.hasAudio,
           hasVideo: !!f.hasVideo,
           supabaseEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
+          cloudEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
           url: f.url,
           downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp4'),
-          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp4')
+          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp4'),
+          cloudDownloadApi: toCloudDownloadApi(normalizedUrl, f.itag, 'mp4')
         };
       })
       .sort((a, b) => b.sizeBytes - a.sizeBytes);
@@ -799,9 +810,11 @@ app.get('/api/jrm', async (req, res) => {
           sizeMB: bytesToMB(sizeBytes),
           audioBitrate: f.audioBitrate || 0,
           supabaseEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
+          cloudEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
           url: f.url,
           downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp3'),
-          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp3')
+          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp3'),
+          cloudDownloadApi: toCloudDownloadApi(normalizedUrl, f.itag, 'mp3')
         };
       })
       .sort((a, b) => b.audioBitrate - a.audioBitrate || b.sizeBytes - a.sizeBytes);
@@ -1056,6 +1069,119 @@ app.get('/api/jrm/save-supabase', async (req, res) => {
     });
   } catch (error) {
     const message = error && error.message ? String(error.message) : 'Failed to upload to Supabase';
+    res.status(500).json({
+      success: false,
+      error: message
+    });
+  }
+});
+
+app.get('/api/jrm/cloud-download', async (req, res) => {
+  try {
+    const rawUrl = req.query.url ? String(req.query.url) : '';
+    const itag = Number(req.query.itag || 0);
+    const type = String(req.query.type || '').toLowerCase();
+    const normalizedUrl = normalizeYoutubeUrl(rawUrl);
+
+    if (!normalizedUrl || !itag || !['mp4', 'mp3'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing or invalid params',
+        message: 'Use /api/jrm/cloud-download?url=YOUTUBE_LINK&itag=FORMAT_ITAG&type=mp4|mp3'
+      });
+    }
+
+    const supabase = getSupabaseClient();
+    const { bucket } = getSupabaseConfig();
+    if (!supabase) {
+      return res.status(500).json({
+        success: false,
+        error: 'Cloud service not configured'
+      });
+    }
+
+    const { info } = await getInfoWithRetries(normalizedUrl);
+    const format = (info.formats || []).find((f) => Number(f.itag) === itag && f.url);
+    if (!format) {
+      return res.status(404).json({
+        success: false,
+        error: 'Format not found',
+        message: 'Refresh and pick another option.'
+      });
+    }
+
+    const sizeBytes = await resolveFormatSizeBytes(format);
+    if (!sizeBytes) {
+      return res.status(400).json({
+        success: false,
+        error: 'Unknown file size',
+        message: 'Cannot process this option now. Try lower resolution.'
+      });
+    }
+    if (sizeBytes > MAX_UPLOAD_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: 'File too large',
+        message: `Choose lower resolution. Max is ${bytesToMBText(MAX_UPLOAD_BYTES)}.`,
+        sizeMB: bytesToMB(sizeBytes),
+        recommendedLowerOptions: buildSupabaseRecommendations(info, type, MAX_UPLOAD_BYTES)
+      });
+    }
+
+    const title = sanitizeFileBaseName(info.videoDetails?.title || info.videoDetails?.videoId || 'video');
+    const videoId = info.videoDetails?.videoId || 'unknown';
+    const ext = extensionFromFormat(format, type);
+    const objectPath = `videos/${videoId}/${Date.now()}-${itag}.${ext}`;
+
+    const upstream = await axios.get(format.url, {
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 120000,
+      headers: getBaseRequestOptions().headers
+    });
+
+    const uploadBuffer = Buffer.from(upstream.data);
+    const contentType = format.mimeType ? String(format.mimeType).split(';')[0] : (type === 'mp3' ? 'audio/mpeg' : 'video/mp4');
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(objectPath, uploadBuffer, {
+        contentType,
+        upsert: false,
+        cacheControl: '3600'
+      });
+
+    if (uploadError) {
+      return res.status(500).json({
+        success: false,
+        error: uploadError.message || 'Cloud upload failed'
+      });
+    }
+
+    const { data: signedData, error: signedErr } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(objectPath, 120);
+
+    if (signedErr || !signedData?.signedUrl) {
+      return res.status(500).json({
+        success: false,
+        error: signedErr?.message || 'Failed to create download URL'
+      });
+    }
+
+    // Auto-delete uploaded object after 1 minute.
+    setTimeout(async () => {
+      try {
+        await supabase.storage.from(bucket).remove([objectPath]);
+      } catch (_) {
+        // ignore cleanup errors
+      }
+    }, 60 * 1000);
+
+    // Auto-start browser download flow by redirecting to signed URL.
+    return res.redirect(signedData.signedUrl);
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : 'Failed to process cloud download';
     res.status(500).json({
       success: false,
       error: message
