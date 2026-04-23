@@ -11,6 +11,12 @@ GET /api/jrm?url=<youtube-url>
 GET /api/jrm?=<youtube-url>
 ```
 
+### Landing / Tester
+```
+GET /
+```
+This returns a simple HTML page with an input box to test `/api/jrm` directly.
+
 **Example:**
 ```
 GET /api/jrm?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ
@@ -179,6 +185,12 @@ The API provides detailed error responses:
   "message": "Human readable description"
 }
 ```
+
+For bot-protected videos, the API now returns:
+- `success: true`
+- `partial: true`
+- empty `mp4` list and zero `size` values
+- fallback thumbnail/title/channel when available
 
 ## Available Endpoints
 
