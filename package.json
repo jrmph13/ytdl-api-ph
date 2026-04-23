@@ -1,0 +1,23 @@
+{
+  "name": "ytdl-api",
+  "version": "1.0.0",
+  "description": "Render-ready YouTube metadata API",
+  "main": "api-server.js",
+  "scripts": {
+    "start": "node api-server.js",
+    "dev": "nodemon api-server.js",
+    "test": "mocha"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ytdl-core": "file:.",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "mocha": "^10.2.0"
+  },
+  "keywords": ["youtube", "api", "download", "video"],
+  "author": "Jhames Martin",
+  "license": "MIT"
+}

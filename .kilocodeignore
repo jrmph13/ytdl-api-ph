@@ -1,0 +1,95 @@
+.kilocodeignore
+test/
+example/
+README*.md
+*.ts
+dist/
+build/
+.cache/
+*.cache/
+*.log
+npm-debug.log*
+.env
+.env.local
+.vscode/
+.DS_Store
+Thumbs.db
+coverage/
+temp/
+tmp/
+*.tmp
+*.key
+*.pem
+*.crt
+*.p12
+*.mp4
+*.mkv
+*.avi
+*.mov
+# Ignore IDE files
+.vscode/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore coverage
+coverage/
+
+# Ignore temporary files
+temp/
+tmp/
+
+# Ignore security files
+*.key
+*.pem
+*.crt
+*.p12
+
+# Ignore large files
+*.mp4
+*.mkv
+*.avi
+*.mov
+
+# Ignore large test data
+**/files/
+**/test-files/
+
+# Ignore node modules
+node_modules/
+
+# Ignore package lock files in some cases
+package-lock.json
+yarn.lock
+
+# Ignore large JSON files that are test data
+**/*.json
+!package.json
+!tsconfig.json
+!tslint.json
+
+# Ignore backup files
+*.backup
+*.bak
+*.tmp
+
+# Ignore large text files
+*.txt
+
+# Ignore large binary files
+*.bin
+*.dat
+
+# Ignore large test outputs
+*.xml
+*.html
+
+# Ignore large media files
+*.mp3
+*.wav
+*.ogg
+
+# Ignore large datasets
+*.csv
+*.tsv
