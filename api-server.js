@@ -93,6 +93,77 @@ function getVideoIdFromWatchUrl(url) {
   }
 }
 
+function parseCookieHeaderToYtdlCookies(cookieHeader) {
+  if (!cookieHeader || typeof cookieHeader !== 'string') return [];
+  return cookieHeader
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const idx = pair.indexOf('=');
+      if (idx <= 0) return null;
+      const name = pair.slice(0, idx).trim();
+      const value = pair.slice(idx + 1).trim();
+      if (!name) return null;
+      return {
+        name,
+        value,
+        domain: '.youtube.com',
+        path: '/',
+        secure: true,
+        httpOnly: false
+      };
+    })
+    .filter(Boolean);
+}
+
+function getBaseRequestOptions() {
+  return {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9'
+    }
+  };
+}
+
+async function getInfoWithRetries(normalizedUrl) {
+  const attempts = [];
+  const cookieHeader = process.env.YT_COOKIE || '';
+  const cookies = parseCookieHeaderToYtdlCookies(cookieHeader);
+  const agent = cookies.length ? ytdl.createAgent(cookies) : null;
+
+  const variants = [
+    { name: 'ANDROID', options: { playerClients: ['ANDROID'] } },
+    { name: 'IOS', options: { playerClients: ['IOS'] } },
+    { name: 'TV', options: { playerClients: ['TV'] } },
+    { name: 'WEB', options: { playerClients: ['WEB'] } },
+    { name: 'ANDROID+WEB', options: { playerClients: ['ANDROID', 'WEB'] } }
+  ];
+
+  let lastError = null;
+  for (const variant of variants) {
+    try {
+      const info = await ytdl.getInfo(normalizedUrl, {
+        ...variant.options,
+        requestOptions: getBaseRequestOptions(),
+        ...(agent ? { agent } : {})
+      });
+      return { info, strategy: variant.name };
+    } catch (err) {
+      lastError = err;
+      attempts.push({
+        strategy: variant.name,
+        error: err && err.message ? String(err.message) : 'Unknown error'
+      });
+    }
+  }
+
+  if (lastError) {
+    lastError.attempts = attempts;
+  }
+  throw lastError || new Error('Failed to fetch video info');
+}
+
 async function buildFallbackPayload(url, originalError) {
   const videoId = getVideoIdFromWatchUrl(url);
   let oembed = null;
@@ -135,7 +206,7 @@ async function buildFallbackPayload(url, originalError) {
       channelId: '',
       keywords: []
     },
-    warning: 'Limited data only. YouTube blocked direct stream extraction for this video on current server IP.',
+    warning: 'Limited data only. YouTube blocked direct stream extraction for this video on current server IP. Add YT_COOKIE env var in Render to improve success rate.',
     originalError
   };
 }
@@ -299,10 +370,11 @@ app.get('/', (req, res) => {
     return num.toLocaleString();
   }
 
-  function renderDownloads(downloads) {
+  function renderDownloads(downloads, data) {
     downloadsEl.innerHTML = '';
     if (!downloads || !downloads.length) {
-      downloadsEl.innerHTML = '<div class="small">No direct download links available for this video right now.</div>';
+      const warn = data && data.warning ? data.warning : 'No direct download links available for this video right now.';
+      downloadsEl.innerHTML = '<div class="small">' + warn + '</div>';
       return;
     }
     downloads.slice(0, 20).forEach((item) => {
@@ -344,7 +416,7 @@ app.get('/', (req, res) => {
       durationEl.textContent = d.durationText || '0:00';
       viewsEl.textContent = fmtViews(d.views);
       channelEl.textContent = d.channelName || '-';
-      renderDownloads(data.downloads || []);
+      renderDownloads(data.downloads || [], data);
       resultEl.classList.remove('hidden');
     } catch (err) {
       statusEl.textContent = 'Network error';
@@ -379,7 +451,8 @@ app.get('/api/jrm', async (req, res) => {
       });
     }
 
-    const info = await ytdl.getInfo(normalizedUrl);
+    const infoResult = await getInfoWithRetries(normalizedUrl);
+    const info = infoResult.info;
     const thumbnails = info.videoDetails?.thumbnails || [];
     const bestThumbnail = thumbnails.length ? thumbnails[thumbnails.length - 1].url : '';
 
@@ -430,6 +503,7 @@ app.get('/api/jrm', async (req, res) => {
       queryExample: '/api/jrm?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ',
       sourceUrl: url,
       normalizedUrl,
+      extractor: infoResult.strategy,
       thumbnail: bestThumbnail,
       size: {
         totalFormats: (info.formats || []).length,
