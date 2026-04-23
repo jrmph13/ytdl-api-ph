@@ -1,8 +1,10 @@
 const express = require('express');
 const ytdl = require('@distube/ytdl-core');
 const axios = require('axios');
+const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const port = process.env.PORT || 3000;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 app.use(express.json());
 
@@ -54,6 +56,10 @@ function bytesToMB(bytes) {
   return Math.round((Number(bytes) / (1024 * 1024)) * 100) / 100;
 }
 
+function bytesToMBText(bytes) {
+  return `${bytesToMB(bytes)} MB`;
+}
+
 function formatDuration(seconds) {
   const total = Number(seconds || 0);
   const hrs = Math.floor(total / 3600);
@@ -86,6 +92,60 @@ function getResolutionText(format) {
 
 function toDownloadApi(normalizedUrl, itag, type) {
   return `/api/jrm/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(itag)}&type=${encodeURIComponent(type)}`;
+}
+
+function toSupabaseSaveApi(normalizedUrl, itag, type) {
+  return `/api/jrm/save-supabase?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(itag)}&type=${encodeURIComponent(type)}`;
+}
+
+function sanitizeFileBaseName(name) {
+  return String(name || 'video')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80) || 'video';
+}
+
+function extensionFromFormat(format, typeHint) {
+  const mime = String(format?.mimeType || '').toLowerCase();
+  if (typeHint === 'mp3') return 'mp3';
+  if (mime.includes('video/mp4')) return 'mp4';
+  if (mime.includes('audio/mp4')) return 'm4a';
+  if (mime.includes('audio/webm') || mime.includes('video/webm')) return 'webm';
+  return typeHint === 'mp4' ? 'mp4' : 'bin';
+}
+
+async function resolveFormatSizeBytes(format) {
+  const fromField = Number(format?.contentLength || 0);
+  if (fromField > 0) return fromField;
+
+  try {
+    const head = await axios.head(format.url, {
+      maxRedirects: 5,
+      timeout: 15000,
+      headers: getBaseRequestOptions().headers
+    });
+    const len = Number(head.headers['content-length'] || 0);
+    return Number.isFinite(len) ? len : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL || '';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const bucket = process.env.SUPABASE_BUCKET || 'videos';
+  return { url, serviceRoleKey, bucket };
+}
+
+function getSupabaseClient() {
+  const { url, serviceRoleKey } = getSupabaseConfig();
+  if (!url || !serviceRoleKey) return null;
+  return createClient(url, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
 }
 
 function getVideoIdFromWatchUrl(url) {
@@ -666,8 +726,10 @@ app.get('/api/jrm', async (req, res) => {
           fps: f.fps || null,
           hasAudio: !!f.hasAudio,
           hasVideo: !!f.hasVideo,
+          supabaseEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
           url: f.url,
-          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp4')
+          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp4'),
+          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp4')
         };
       })
       .sort((a, b) => b.sizeBytes - a.sizeBytes);
@@ -685,8 +747,10 @@ app.get('/api/jrm', async (req, res) => {
           sizeBytes,
           sizeMB: bytesToMB(sizeBytes),
           audioBitrate: f.audioBitrate || 0,
+          supabaseEligible: sizeBytes > 0 && sizeBytes <= MAX_UPLOAD_BYTES,
           url: f.url,
-          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp3')
+          downloadApi: toDownloadApi(normalizedUrl, f.itag, 'mp3'),
+          saveToSupabaseApi: toSupabaseSaveApi(normalizedUrl, f.itag, 'mp3')
         };
       })
       .sort((a, b) => b.audioBitrate - a.audioBitrate || b.sizeBytes - a.sizeBytes);
@@ -707,6 +771,8 @@ app.get('/api/jrm', async (req, res) => {
         totalFormats: (info.formats || []).length,
         mp4Formats: mp4Formats.length,
         mp3Formats: mp3Formats.length,
+        maxSupabaseUploadBytes: MAX_UPLOAD_BYTES,
+        maxSupabaseUploadMB: bytesToMB(MAX_UPLOAD_BYTES),
         bestMp4Bytes: bestMp4 ? bestMp4.sizeBytes : 0,
         bestMp4MB: bestMp4 ? bestMp4.sizeMB : 0
       },
@@ -780,6 +846,122 @@ app.get('/api/jrm/download', async (req, res) => {
       success: false,
       error: message,
       message: 'Unable to stream download right now. Please retry.'
+    });
+  }
+});
+
+app.get('/api/jrm/save-supabase', async (req, res) => {
+  try {
+    const rawUrl = req.query.url ? String(req.query.url) : '';
+    const itag = Number(req.query.itag || 0);
+    const type = String(req.query.type || '').toLowerCase();
+    const normalizedUrl = normalizeYoutubeUrl(rawUrl);
+
+    if (!normalizedUrl || !itag || !['mp4', 'mp3'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing or invalid params',
+        message: 'Use /api/jrm/save-supabase?url=YOUTUBE_LINK&itag=FORMAT_ITAG&type=mp4|mp3'
+      });
+    }
+
+    const supabase = getSupabaseClient();
+    const { url: supabaseUrl, bucket } = getSupabaseConfig();
+    if (!supabase || !supabaseUrl) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase not configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Render'
+      });
+    }
+
+    const { info } = await getInfoWithRetries(normalizedUrl);
+    const format = (info.formats || []).find((f) => Number(f.itag) === itag && f.url);
+    if (!format) {
+      return res.status(404).json({
+        success: false,
+        error: 'Format not found',
+        message: 'Refresh video info and try again'
+      });
+    }
+
+    const sizeBytes = await resolveFormatSizeBytes(format);
+    if (!sizeBytes) {
+      return res.status(400).json({
+        success: false,
+        error: 'Unknown file size',
+        message: `Cannot verify file size. Only files up to ${bytesToMBText(MAX_UPLOAD_BYTES)} are accepted.`
+      });
+    }
+    if (sizeBytes > MAX_UPLOAD_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: 'File too large',
+        message: `Only files up to ${bytesToMBText(MAX_UPLOAD_BYTES)} are allowed`,
+        sizeBytes,
+        sizeMB: bytesToMB(sizeBytes)
+      });
+    }
+
+    const title = sanitizeFileBaseName(info.videoDetails?.title || info.videoDetails?.videoId || 'video');
+    const videoId = info.videoDetails?.videoId || 'unknown';
+    const ext = extensionFromFormat(format, type);
+    const objectPath = `videos/${videoId}/${Date.now()}-${itag}.${ext}`;
+
+    const upstream = await axios.get(format.url, {
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 120000,
+      headers: getBaseRequestOptions().headers
+    });
+
+    const uploadBuffer = Buffer.from(upstream.data);
+    const contentType = format.mimeType ? String(format.mimeType).split(';')[0] : (type === 'mp3' ? 'audio/mpeg' : 'video/mp4');
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(objectPath, uploadBuffer, {
+        contentType,
+        upsert: false,
+        cacheControl: '3600'
+      });
+
+    if (uploadError) {
+      return res.status(500).json({
+        success: false,
+        error: uploadError.message || 'Supabase upload failed'
+      });
+    }
+
+    const { data: signedData, error: signedErr } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(objectPath, 60 * 60 * 24 * 7);
+
+    const publicUrl = `${supabaseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${bucket}/${objectPath}`;
+    res.json({
+      success: true,
+      app: 'ytdl-ph',
+      provider: 'supabase',
+      file: {
+        path: objectPath,
+        bucket,
+        contentType,
+        sizeBytes,
+        sizeMB: bytesToMB(sizeBytes),
+        originalTitle: info.videoDetails?.title || '',
+        suggestedName: `${title}.${ext}`
+      },
+      urls: {
+        signed: signedErr ? null : signedData?.signedUrl || null,
+        public: publicUrl
+      },
+      note: 'Signed URL expires in 7 days. Public URL works only if bucket/object is publicly readable.'
+    });
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : 'Failed to upload to Supabase';
+    res.status(500).json({
+      success: false,
+      error: message
     });
   }
 });
