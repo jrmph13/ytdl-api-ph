@@ -235,24 +235,33 @@ async function getInfoWithRetries(normalizedUrl) {
   const cookies = parseCookieHeaderToYtdlCookies(cookieHeader);
   const agent = cookies.length ? ytdl.createAgent(cookies) : null;
 
+  console.log(`[DEBUG] Fetching info for ${normalizedUrl}, cookies present: ${!!cookieHeader}`);
+
   const variants = [
     { name: 'ANDROID', options: { playerClients: ['ANDROID'] } },
+    { name: 'ANDROID_EMBED', options: { playerClients: ['ANDROID_EMBED'] } },
     { name: 'IOS', options: { playerClients: ['IOS'] } },
+    { name: 'IOS_EMBED', options: { playerClients: ['IOS_EMBED'] } },
     { name: 'TV', options: { playerClients: ['TV'] } },
     { name: 'WEB', options: { playerClients: ['WEB'] } },
+    { name: 'WEB_EMBED', options: { playerClients: ['WEB_EMBED'] } },
+    { name: 'MWEB', options: { playerClients: ['MWEB'] } },
     { name: 'ANDROID+WEB', options: { playerClients: ['ANDROID', 'WEB'] } }
   ];
 
   let lastError = null;
   for (const variant of variants) {
     try {
+      console.log(`[DEBUG] Trying strategy: ${variant.name}`);
       const info = await ytdl.getInfo(normalizedUrl, {
         ...variant.options,
         requestOptions: getBaseRequestOptions(),
         ...(agent ? { agent } : {})
       });
+      console.log(`[DEBUG] Success with strategy: ${variant.name}, formats: ${(info.formats || []).length}`);
       return { info, strategy: variant.name };
     } catch (err) {
+      console.log(`[DEBUG] Failed strategy ${variant.name}: ${err && err.message ? String(err.message) : 'Unknown error'}`);
       lastError = err;
       attempts.push({
         strategy: variant.name,
@@ -261,6 +270,7 @@ async function getInfoWithRetries(normalizedUrl) {
     }
   }
 
+  console.log(`[DEBUG] All strategies failed, attempts:`, attempts);
   if (lastError) {
     lastError.attempts = attempts;
   }
