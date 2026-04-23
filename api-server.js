@@ -313,6 +313,22 @@ app.get('/', (req, res) => {
       background: linear-gradient(135deg, var(--brand), var(--brand2));
       color: #fff;
     }
+    .btn-secondary {
+      background: #111935;
+      border: 1px solid #2c3150;
+      color: #dbe3ff;
+    }
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .gen-status {
+      font-size: 12px;
+      color: var(--muted);
+      align-self: center;
+    }
     .meta { margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 10px; }
     .chip { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #0b1220; }
     .chip b { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
@@ -409,7 +425,11 @@ app.get('/', (req, res) => {
       </div>
       <div class="search">
         <input id="yt" value="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />
-        <button id="run">Search</button>
+        <button id="run">Get Video</button>
+      </div>
+      <div class="btn-row">
+        <button id="generateBtn" class="btn-secondary hidden">Download</button>
+        <span id="genStatus" class="gen-status hidden"></span>
       </div>
       <div class="meta">
         <div class="chip"><b>Status</b><span id="status">Ready</span></div>
@@ -431,7 +451,7 @@ app.get('/', (req, res) => {
             <div class="chip"><b>Views</b><span id="views">-</span></div>
             <div class="chip"><b>Channel</b><span id="channel">-</span></div>
           </div>
-          <div class="dual">
+          <div id="optionsWrap" class="dual hidden">
             <div>
               <div class="section-title">MP4 Downloads</div>
               <div id="downloadsMp4" class="dl-grid"></div>
@@ -449,9 +469,12 @@ app.get('/', (req, res) => {
   </div>
 <script>
   const runBtn = document.getElementById('run');
+  const generateBtn = document.getElementById('generateBtn');
+  const genStatusEl = document.getElementById('genStatus');
   const input = document.getElementById('yt');
   const statusEl = document.getElementById('status');
   const resultEl = document.getElementById('result');
+  const optionsWrapEl = document.getElementById('optionsWrap');
   const thumbEl = document.getElementById('thumb');
   const titleEl = document.getElementById('title');
   const descEl = document.getElementById('desc');
@@ -464,6 +487,7 @@ app.get('/', (req, res) => {
   const warnEl = document.getElementById('warn');
   const badgeExtractor = document.getElementById('badgeExtractor');
   const badgeMode = document.getElementById('badgeMode');
+  let lastData = null;
 
   function fmtViews(n) {
     const num = Number(n || 0);
@@ -541,6 +565,10 @@ app.get('/', (req, res) => {
     statusEl.textContent = 'Loading...';
     statusEl.className = '';
     resultEl.classList.add('hidden');
+    optionsWrapEl.classList.add('hidden');
+    generateBtn.classList.add('hidden');
+    genStatusEl.classList.add('hidden');
+    genStatusEl.textContent = '';
     try {
       const res = await fetch('/api/jrm?url=' + encodeURIComponent(link));
       const data = await res.json();
@@ -562,7 +590,8 @@ app.get('/', (req, res) => {
       channelEl.textContent = d.channelName || '-';
       badgeExtractor.textContent = 'Extractor: ' + (data.extractor || '-');
       badgeMode.textContent = 'Mode: ' + (data.partial ? 'Partial' : 'Full');
-      renderDownloads(data);
+      lastData = data;
+      generateBtn.classList.remove('hidden');
       if (data.warning) {
         warnEl.textContent = dedupeWarningText(data.warning);
         warnEl.classList.remove('hidden');
@@ -572,6 +601,22 @@ app.get('/', (req, res) => {
       statusEl.textContent = 'Network error';
       statusEl.className = 'err';
     }
+  });
+
+  generateBtn.addEventListener('click', async () => {
+    if (!lastData) return;
+    generateBtn.disabled = true;
+    genStatusEl.textContent = 'Generating download options...';
+    genStatusEl.classList.remove('hidden');
+    optionsWrapEl.classList.add('hidden');
+
+    // Keep UX clear: user sees processing before options appear.
+    await new Promise((r) => setTimeout(r, 650));
+
+    renderDownloads(lastData);
+    optionsWrapEl.classList.remove('hidden');
+    genStatusEl.textContent = 'Options ready.';
+    generateBtn.disabled = false;
   });
 </script>
 </body>
