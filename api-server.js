@@ -310,7 +310,7 @@ async function buildFallbackPayload(url, originalError) {
       channelId: '',
       keywords: []
     },
-    warning: 'Limited data only. YouTube blocked direct stream extraction for this video on current server IP. Add YT_COOKIE env var in Render to improve success rate.',
+    warning: 'Limited data only. Video source is currently blocked on this server IP. Try another video or lower quality.',
     originalError
   };
 }
@@ -635,6 +635,12 @@ app.get('/', (req, res) => {
       a.href = cloudEligible ? (item.cloudDownloadApi || item.downloadApi || item.url) : '#';
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
+      if (cloudEligible) {
+        a.addEventListener('click', () => {
+          genStatusEl.textContent = 'Processing selected option... upload + download in progress.';
+          genStatusEl.classList.remove('hidden');
+        });
+      }
       const res = item.resolution || '-';
       const size = item.sizeMB ? item.sizeMB + ' MB' : '-';
       const knownSize = Number(item.sizeBytes || 0);
@@ -1158,9 +1164,10 @@ app.get('/api/jrm/cloud-download', async (req, res) => {
       });
     }
 
+    const suggestedName = `${title}.${ext}`;
     const { data: signedData, error: signedErr } = await supabase.storage
       .from(bucket)
-      .createSignedUrl(objectPath, 120);
+      .createSignedUrl(objectPath, 120, { download: suggestedName });
 
     if (signedErr || !signedData?.signedUrl) {
       return res.status(500).json({
@@ -1178,6 +1185,7 @@ app.get('/api/jrm/cloud-download', async (req, res) => {
       }
     }, 60 * 1000);
 
+    res.setHeader('Cache-Control', 'no-store');
     // Auto-start browser download flow by redirecting to signed URL.
     return res.redirect(signedData.signedUrl);
   } catch (error) {
