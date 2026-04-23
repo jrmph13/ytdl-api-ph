@@ -788,7 +788,7 @@ app.get('/api/jrm', async (req, res) => {
     const bestThumbnail = thumbnails.length ? thumbnails[thumbnails.length - 1].url : '';
 
     const mp4Formats = (info.formats || [])
-      .filter((f) => (f.mimeType || '').includes('video/mp4') && f.url)
+      .filter((f) => f.hasVideo && f.url)
       .map((f) => {
         const sizeBytes = Number(f.contentLength || 0);
         return {
