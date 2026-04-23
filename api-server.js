@@ -180,6 +180,7 @@ async function buildFallbackPayload(url, originalError) {
   }
 
   return {
+    app: 'ytdl-ph',
     success: true,
     partial: true,
     endpoint: '/api/jrm',
@@ -222,79 +223,107 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>JRM YTDL API</title>
+  <title>YTDL PH</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --card: #111827;
-      --line: #1f2937;
-      --text: #e5e7eb;
-      --muted: #9ca3af;
-      --accent: #06b6d4;
-      --accent2: #0ea5e9;
-      --good: #22c55e;
-      --bad: #ef4444;
-      --gold: #f59e0b;
+      --bg: #080a14;
+      --bg2: #141827;
+      --card: #111428;
+      --line: #252a43;
+      --text: #f5f7ff;
+      --muted: #adb6d9;
+      --brand: #ff2d55;
+      --brand2: #ff6b6b;
+      --ok: #22c55e;
+      --err: #ff4d4f;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
       color: var(--text);
-      background: radial-gradient(circle at top right, #1e293b, var(--bg) 55%);
+      background:
+        radial-gradient(circle at 10% -15%, #3a1e3a, transparent 45%),
+        radial-gradient(circle at 90% -15%, #242f6b, transparent 45%),
+        linear-gradient(180deg, var(--bg2), var(--bg));
       min-height: 100vh;
-      padding: 24px;
-    }
-    .wrap { max-width: 920px; margin: 0 auto; }
-    .card {
-      background: linear-gradient(180deg, #111827 0%, #0b1220 100%);
-      border: 1px solid var(--line);
-      border-radius: 18px;
       padding: 22px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
-    h1 { margin: 0 0 8px; font-size: 30px; }
-    p { color: var(--muted); margin-top: 0; }
-    .hero-note {
-      border: 1px dashed #1e3a8a;
-      border-radius: 10px;
-      padding: 10px;
-      margin: 10px 0 16px;
-      color: #bfdbfe;
-      background: rgba(30, 58, 138, .15);
+    .wrap { max-width: 1060px; margin: 0 auto; }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .logo {
+      font-weight: 900;
+      letter-spacing: .5px;
+      font-size: 28px;
+      margin: 0;
+    }
+    .logo span { color: var(--brand); }
+    .sub {
+      color: var(--muted);
+      margin: 0;
       font-size: 13px;
     }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; }
-    input {
-      flex: 1;
-      min-width: 280px;
+    .card {
+      background: linear-gradient(180deg, #131832 0%, #0d1227 100%);
       border: 1px solid var(--line);
-      background: #0b1220;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    .hero {
+      margin-bottom: 14px;
+    }
+    .hero h2 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .search {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin: 16px 0 10px;
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #0a0f22;
       color: var(--text);
       border-radius: 10px;
       padding: 12px;
-      font-size: 14px;
+      font-size: 15px;
     }
     button {
-      border: 0;
+      border: 1px solid #55203b;
       border-radius: 10px;
-      padding: 12px 16px;
-      font-weight: 600;
+      padding: 12px 18px;
+      font-weight: 700;
       cursor: pointer;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      color: #03121a;
+      background: linear-gradient(135deg, var(--brand), var(--brand2));
+      color: #fff;
     }
-    .meta { margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; }
+    .meta { margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 10px; }
     .chip { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #0b1220; }
     .chip b { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
     .preview {
       margin-top: 14px;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #0b1220;
+      background: #0b1022;
       padding: 12px;
       display: grid;
-      grid-template-columns: 260px 1fr;
+      grid-template-columns: 280px 1fr;
       gap: 14px;
     }
     .thumb {
@@ -307,10 +336,15 @@ app.get('/', (req, res) => {
     }
     .title { margin: 0 0 8px; font-size: 20px; }
     .desc { margin: 0; color: var(--muted); line-height: 1.4; font-size: 14px; }
-    .dl-head { margin: 16px 0 8px; font-weight: 700; }
+    .section-title { margin: 16px 0 8px; font-weight: 800; letter-spacing:.3px; }
+    .dual {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
     .dl-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
       gap: 10px;
     }
     .dl-btn {
@@ -322,15 +356,15 @@ app.get('/', (req, res) => {
       background: #020617;
       color: var(--text);
     }
-    .dl-btn b { display: block; color: #7dd3fc; margin-bottom: 3px; }
+    .dl-btn b { display: block; color: #fda4af; margin-bottom: 3px; }
     .small { color: var(--muted); font-size: 12px; }
     .hidden { display: none; }
     .warn {
       margin-top: 10px;
-      color: #fcd34d;
+      color: #ffd584;
       font-size: 12px;
-      border: 1px solid rgba(245, 158, 11, .35);
-      background: rgba(245, 158, 11, .12);
+      border: 1px solid rgba(255, 174, 66, .35);
+      background: rgba(255, 174, 66, .12);
       border-radius: 8px;
       padding: 8px;
     }
@@ -338,35 +372,48 @@ app.get('/', (req, res) => {
       display: inline-block;
       border-radius: 999px;
       padding: 4px 10px;
-      border: 1px solid #1f2937;
-      background: #0a1428;
-      color: #93c5fd;
+      border: 1px solid #2c3150;
+      background: #111935;
+      color: #c4b5fd;
       font-size: 12px;
       margin-right: 6px;
     }
-    @media (max-width: 760px) {
-      .preview { grid-template-columns: 1fr; }
+    .footer-note {
+      margin-top: 10px;
+      color: #8893bf;
+      font-size: 12px;
     }
-    .ok { color: var(--good); }
-    .err { color: var(--bad); }
-    code { color: #93c5fd; }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: #fda4af; }
+    @media (max-width: 760px) {
+      .search { grid-template-columns: 1fr; }
+      .preview { grid-template-columns: 1fr; }
+      .dual { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="card">
-      <h1>JRM YTDL API</h1>
-      <p>Paste YouTube URL, then get fresh download buttons.</p>
-      <div class="hero-note">
-        Download buttons now use backend endpoint <code>/api/jrm/download</code> so each click generates a fresh stream link.
+    <div class="top">
+      <div>
+        <h1 class="logo">YTDL <span>PH</span></h1>
+        <p class="sub">Fast YouTube downloader interface for MP4/MP3 links</p>
       </div>
-      <div class="row">
+      <p class="sub">API: <code>/api/jrm?url=...</code></p>
+    </div>
+    <div class="card">
+      <div class="hero">
+        <h2>YouTube Downloader, Pinoy style.</h2>
+        <p>Paste any YouTube URL. Click search. Pick MP4 or MP3 quality and download.</p>
+      </div>
+      <div class="search">
         <input id="yt" value="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />
-        <button id="run">Test API</button>
+        <button id="run">Search</button>
       </div>
       <div class="meta">
         <div class="chip"><b>Status</b><span id="status">Ready</span></div>
-        <div class="chip"><b>Service</b><span>Render-ready Node API</span></div>
+        <div class="chip"><b>Service</b><span>ytdl-ph</span></div>
         <div class="chip"><b>Made By</b><span>JhamesMartin</span></div>
       </div>
       <div id="result" class="preview hidden">
@@ -384,9 +431,18 @@ app.get('/', (req, res) => {
             <div class="chip"><b>Views</b><span id="views">-</span></div>
             <div class="chip"><b>Channel</b><span id="channel">-</span></div>
           </div>
-          <div class="dl-head">Download Links</div>
-          <div id="downloads" class="dl-grid"></div>
+          <div class="dual">
+            <div>
+              <div class="section-title">MP4 Downloads</div>
+              <div id="downloadsMp4" class="dl-grid"></div>
+            </div>
+            <div>
+              <div class="section-title">MP3 Downloads</div>
+              <div id="downloadsMp3" class="dl-grid"></div>
+            </div>
+          </div>
           <div id="warn" class="warn hidden"></div>
+          <div class="footer-note">Buttons call <code>/api/jrm/download</code> and generate fresh link per click.</div>
         </div>
       </div>
     </div>
@@ -403,7 +459,8 @@ app.get('/', (req, res) => {
   const durationEl = document.getElementById('duration');
   const viewsEl = document.getElementById('views');
   const channelEl = document.getElementById('channel');
-  const downloadsEl = document.getElementById('downloads');
+  const downloadsMp4El = document.getElementById('downloadsMp4');
+  const downloadsMp3El = document.getElementById('downloadsMp3');
   const warnEl = document.getElementById('warn');
   const badgeExtractor = document.getElementById('badgeExtractor');
   const badgeMode = document.getElementById('badgeMode');
@@ -414,14 +471,13 @@ app.get('/', (req, res) => {
     return num.toLocaleString();
   }
 
-  function renderDownloads(downloads, data) {
-    downloadsEl.innerHTML = '';
-    if (!downloads || !downloads.length) {
-      const warn = data && data.warning ? data.warning : 'No direct download links available for this video right now.';
-      downloadsEl.innerHTML = '<div class="small">' + warn + '</div>';
+  function renderOne(container, list, emptyText) {
+    container.innerHTML = '';
+    if (!list || !list.length) {
+      container.innerHTML = '<div class="small">' + emptyText + '</div>';
       return;
     }
-    downloads.slice(0, 20).forEach((item) => {
+    list.slice(0, 12).forEach((item) => {
       const a = document.createElement('a');
       a.className = 'dl-btn';
       a.href = item.downloadApi || item.url;
@@ -433,8 +489,13 @@ app.get('/', (req, res) => {
         '<div class="small">Resolution: ' + res + '</div>' +
         '<div class="small">Size: ' + size + '</div>' +
         '<div class="small">Open download link</div>';
-      downloadsEl.appendChild(a);
+      container.appendChild(a);
     });
+  }
+
+  function renderDownloads(data) {
+    renderOne(downloadsMp4El, data.mp4 || [], 'No MP4 links available.');
+    renderOne(downloadsMp3El, data.mp3 || [], 'No MP3 links available.');
   }
 
   runBtn.addEventListener('click', async () => {
@@ -464,7 +525,7 @@ app.get('/', (req, res) => {
       channelEl.textContent = d.channelName || '-';
       badgeExtractor.textContent = 'Extractor: ' + (data.extractor || '-');
       badgeMode.textContent = 'Mode: ' + (data.partial ? 'Partial' : 'Full');
-      renderDownloads(data.downloads || [], data);
+      renderDownloads(data);
       if (data.warning) {
         warnEl.textContent = data.warning;
         warnEl.classList.remove('hidden');
@@ -484,7 +545,7 @@ app.get('/health', (req, res) => {
   res.json({
     success: true,
     status: 'ok',
-    service: 'ytdl-api',
+    service: 'ytdl-ph',
     madebyJhamesMartin: 'JhamesMartin',
     timestamp: new Date().toISOString()
   });
@@ -552,6 +613,7 @@ app.get('/api/jrm', async (req, res) => {
     const downloads = [...mp4Formats, ...mp3Formats];
 
     res.json({
+      app: 'ytdl-ph',
       success: true,
       endpoint: '/api/jrm',
       queryExample: '/api/jrm?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ',
