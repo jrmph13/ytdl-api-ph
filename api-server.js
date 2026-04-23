@@ -63,6 +63,27 @@ function formatDuration(seconds) {
   return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
+function guessResolutionFromQuality(qualityLabel) {
+  const map = {
+    '2160p': '3840x2160',
+    '1440p': '2560x1440',
+    '1080p': '1920x1080',
+    '720p': '1280x720',
+    '480p': '854x480',
+    '360p': '640x360',
+    '240p': '426x240',
+    '144p': '256x144'
+  };
+  return map[qualityLabel] || null;
+}
+
+function getResolutionText(format) {
+  if (format && format.width && format.height) {
+    return `${format.width}x${format.height}`;
+  }
+  return guessResolutionFromQuality(format?.qualityLabel || format?.quality) || null;
+}
+
 function getVideoIdFromWatchUrl(url) {
   try {
     const parsed = new URL(url);
@@ -93,10 +114,13 @@ async function buildFallbackPayload(url, originalError) {
     size: {
       totalFormats: 0,
       mp4Formats: 0,
+      mp3Formats: 0,
       bestMp4Bytes: 0,
       bestMp4MB: 0
     },
     mp4: [],
+    mp3: [],
+    downloads: [],
     madebyJhamesMartin: 'JhamesMartin',
     details: {
       videoId,
@@ -178,17 +202,46 @@ app.get('/', (req, res) => {
     .meta { margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; }
     .chip { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #0b1220; }
     .chip b { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
-    pre {
-      margin: 14px 0 0;
+    .preview {
+      margin-top: 14px;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #020617;
-      color: #dbeafe;
+      background: #0b1220;
       padding: 12px;
-      max-height: 380px;
-      overflow: auto;
-      font-size: 12px;
-      line-height: 1.45;
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 14px;
+    }
+    .thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #020617;
+    }
+    .title { margin: 0 0 8px; font-size: 20px; }
+    .desc { margin: 0; color: var(--muted); line-height: 1.4; font-size: 14px; }
+    .dl-head { margin: 16px 0 8px; font-weight: 700; }
+    .dl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .dl-btn {
+      display: block;
+      text-decoration: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: #020617;
+      color: var(--text);
+    }
+    .dl-btn b { display: block; color: #93c5fd; margin-bottom: 3px; }
+    .small { color: var(--muted); font-size: 12px; }
+    .hidden { display: none; }
+    @media (max-width: 760px) {
+      .preview { grid-template-columns: 1fr; }
     }
     .ok { color: var(--good); }
     .err { color: var(--bad); }
@@ -209,30 +262,93 @@ app.get('/', (req, res) => {
         <div class="chip"><b>Service</b><span>Render-ready Node API</span></div>
         <div class="chip"><b>Made By</b><span>JhamesMartin</span></div>
       </div>
-      <pre id="out">{ "info": "Submit a YouTube link to test JSON output." }</pre>
+      <div id="result" class="preview hidden">
+        <img id="thumb" class="thumb" alt="thumbnail" />
+        <div>
+          <h2 id="title" class="title"></h2>
+          <p id="desc" class="desc"></p>
+          <div class="meta">
+            <div class="chip"><b>Video ID</b><span id="videoId">-</span></div>
+            <div class="chip"><b>Duration</b><span id="duration">-</span></div>
+            <div class="chip"><b>Views</b><span id="views">-</span></div>
+            <div class="chip"><b>Channel</b><span id="channel">-</span></div>
+          </div>
+          <div class="dl-head">Download Links</div>
+          <div id="downloads" class="dl-grid"></div>
+        </div>
+      </div>
     </div>
   </div>
 <script>
   const runBtn = document.getElementById('run');
   const input = document.getElementById('yt');
-  const out = document.getElementById('out');
   const statusEl = document.getElementById('status');
+  const resultEl = document.getElementById('result');
+  const thumbEl = document.getElementById('thumb');
+  const titleEl = document.getElementById('title');
+  const descEl = document.getElementById('desc');
+  const videoIdEl = document.getElementById('videoId');
+  const durationEl = document.getElementById('duration');
+  const viewsEl = document.getElementById('views');
+  const channelEl = document.getElementById('channel');
+  const downloadsEl = document.getElementById('downloads');
+
+  function fmtViews(n) {
+    const num = Number(n || 0);
+    if (!num) return '0';
+    return num.toLocaleString();
+  }
+
+  function renderDownloads(downloads) {
+    downloadsEl.innerHTML = '';
+    if (!downloads || !downloads.length) {
+      downloadsEl.innerHTML = '<div class="small">No direct download links available for this video right now.</div>';
+      return;
+    }
+    downloads.slice(0, 20).forEach((item) => {
+      const a = document.createElement('a');
+      a.className = 'dl-btn';
+      a.href = item.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      const res = item.resolution || '-';
+      const size = item.sizeMB ? item.sizeMB + ' MB' : '-';
+      a.innerHTML = '<b>' + item.type.toUpperCase() + ' ' + (item.quality || '') + '</b>' +
+        '<div class="small">Resolution: ' + res + '</div>' +
+        '<div class="small">Size: ' + size + '</div>' +
+        '<div class="small">Open download link</div>';
+      downloadsEl.appendChild(a);
+    });
+  }
+
   runBtn.addEventListener('click', async () => {
     const link = input.value.trim();
     if (!link) return;
     statusEl.textContent = 'Loading...';
     statusEl.className = '';
-    out.textContent = 'Loading...';
+    resultEl.classList.add('hidden');
     try {
       const res = await fetch('/api/jrm?url=' + encodeURIComponent(link));
       const data = await res.json();
       statusEl.textContent = res.ok ? 'Success' : 'Error';
       statusEl.className = res.ok ? 'ok' : 'err';
-      out.textContent = JSON.stringify(data, null, 2);
+      if (!data.success) {
+        statusEl.textContent = data.error || 'Error';
+        return;
+      }
+      const d = data.details || {};
+      thumbEl.src = data.thumbnail || '';
+      titleEl.textContent = d.title || 'No title';
+      descEl.textContent = d.description || 'No description';
+      videoIdEl.textContent = d.videoId || '-';
+      durationEl.textContent = d.durationText || '0:00';
+      viewsEl.textContent = fmtViews(d.views);
+      channelEl.textContent = d.channelName || '-';
+      renderDownloads(data.downloads || []);
+      resultEl.classList.remove('hidden');
     } catch (err) {
       statusEl.textContent = 'Network error';
       statusEl.className = 'err';
-      out.textContent = JSON.stringify({ success: false, error: err.message }, null, 2);
     }
   });
 </script>
@@ -276,6 +392,7 @@ app.get('/api/jrm', async (req, res) => {
           quality: f.qualityLabel || f.quality || 'unknown',
           type: 'mp4',
           mimeType: f.mimeType || 'video/mp4',
+          resolution: getResolutionText(f),
           sizeBytes,
           sizeMB: bytesToMB(sizeBytes),
           fps: f.fps || null,
@@ -286,7 +403,26 @@ app.get('/api/jrm', async (req, res) => {
       })
       .sort((a, b) => b.sizeBytes - a.sizeBytes);
 
+    const mp3Formats = (info.formats || [])
+      .filter((f) => f.hasAudio && !f.hasVideo && f.url)
+      .map((f) => {
+        const sizeBytes = Number(f.contentLength || 0);
+        return {
+          itag: f.itag,
+          quality: `${f.audioBitrate || 0}kbps`,
+          type: 'mp3',
+          mimeType: f.mimeType || 'audio/mp4',
+          resolution: null,
+          sizeBytes,
+          sizeMB: bytesToMB(sizeBytes),
+          audioBitrate: f.audioBitrate || 0,
+          url: f.url
+        };
+      })
+      .sort((a, b) => b.audioBitrate - a.audioBitrate || b.sizeBytes - a.sizeBytes);
+
     const bestMp4 = mp4Formats[0] || null;
+    const downloads = [...mp4Formats, ...mp3Formats];
 
     res.json({
       success: true,
@@ -298,10 +434,13 @@ app.get('/api/jrm', async (req, res) => {
       size: {
         totalFormats: (info.formats || []).length,
         mp4Formats: mp4Formats.length,
+        mp3Formats: mp3Formats.length,
         bestMp4Bytes: bestMp4 ? bestMp4.sizeBytes : 0,
         bestMp4MB: bestMp4 ? bestMp4.sizeMB : 0
       },
       mp4: mp4Formats,
+      mp3: mp3Formats,
+      downloads,
       madebyJhamesMartin: 'JhamesMartin',
       details: {
         videoId: info.videoDetails?.videoId || '',
